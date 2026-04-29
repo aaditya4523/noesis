@@ -1,0 +1,31 @@
+[project]
+name = "noesis"
+version = "0.1.0"
+description = "Noesis raw source acquisition engine"
+requires-python = ">=3.14"
+dependencies = [
+    "beautifulsoup4>=4.13.0",
+    "ddgs>=9.5.0",
+    "httpx>=0.28.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.4.0",
+]
+
+[project.scripts]
+noesis-collect = "noesis.cli:main"
+
+[build-system]
+requires = ["setuptools>=80.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
