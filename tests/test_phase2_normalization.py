@@ -84,7 +84,21 @@ def test_normalize_html_source_extracts_article_content(tmp_path: Path):
     data = json.loads(normalized_path.read_text(encoding="utf-8"))
     assert data["title"] == "Distributed Systems Primer"
     assert data["headings"] == ["Distributed Systems Primer", "Replication", "Sharding"]
-    assert "Distributed systems are collections of independent computers." in data["text"]
+    assert "text" not in data
+    assert data["sections"] == [
+        {
+            "heading_path": ["Distributed Systems Primer"],
+            "paragraphs": ["Distributed systems are collections of independent computers."],
+        },
+        {
+            "heading_path": ["Distributed Systems Primer", "Replication"],
+            "paragraphs": ["Replication improves availability and read throughput for critical data."],
+        },
+        {
+            "heading_path": ["Distributed Systems Primer", "Sharding"],
+            "paragraphs": ["Sharding partitions data to distribute write and storage load across nodes."],
+        },
+    ]
     assert data["links"] == [
         {"url": "https://example.com/child-article", "text": "Child article"},
         {"url": "https://external.example.org/reference", "text": "External reference"},
@@ -103,6 +117,20 @@ def test_normalize_html_source_detects_hub_and_preserves_child_links(tmp_path: P
 
     data = json.loads(normalized_path.read_text(encoding="utf-8"))
     assert len(data["links"]) == 6
+    assert data["sections"] == [
+        {
+            "heading_path": ["System Design Topics"],
+            "paragraphs": [
+                "Use this roadmap to study the major system design concepts.",
+                "Load Balancing",
+                "Caching",
+                "Sharding",
+                "Pub/Sub",
+                "Queues",
+                "Consistency",
+            ],
+        }
+    ]
     assert {"url": "https://example.com/system-design/caching", "text": "Caching"} in data["links"]
 
 
@@ -150,7 +178,16 @@ def test_normalize_html_source_picks_richest_content_root(tmp_path: Path):
 
     data = json.loads(normalized_path.read_text(encoding="utf-8"))
     assert data["title"] == "System Design Deep Dive"
-    assert "scalability, consistency, queues, and caches" in data["text"]
+    assert "text" not in data
+    assert data["sections"] == [
+        {
+            "heading_path": ["System Design Deep Dive"],
+            "paragraphs": [
+                "This guide explains scalability, consistency, queues, and caches in depth.",
+                "It walks through trade-offs with examples and concrete architecture choices.",
+            ],
+        }
+    ]
     assert data["links"] == [
         {"url": "https://example.com/system-design/caching", "text": "Caching article"}
     ]

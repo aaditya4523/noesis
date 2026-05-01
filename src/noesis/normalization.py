@@ -6,7 +6,7 @@ from urllib.parse import urljoin, urldefrag, urlparse
 
 from bs4 import BeautifulSoup
 
-from noesis.models import NormalizedHtmlDocument, NormalizedLink
+from noesis.models import NormalizedHtmlDocument, NormalizedLink, NormalizedSection
 
 
 def normalize_run_html_sources(run_path: Path) -> list[Path]:
@@ -28,7 +28,11 @@ def normalize_run_html_sources(run_path: Path) -> list[Path]:
 def normalize_html_source(source_dir: Path) -> Path:
     metadata = json.loads((source_dir / "metadata.json").read_text(encoding="utf-8"))
     raw_html = (source_dir / "raw.html").read_text(encoding="utf-8", errors="ignore")
-    document = _extract_document(raw_html, metadata)
+    document = normalize_html_document(
+        source_id=str(metadata.get("source_id") or source_dir_name(metadata)),
+        final_url=str(metadata.get("final_url") or metadata.get("url") or ""),
+        raw_html=raw_html,
+    )
 
     normalized_path = source_dir / "normalized.json"
     normalized_path.write_text(
@@ -36,6 +40,10 @@ def normalize_html_source(source_dir: Path) -> Path:
         encoding="utf-8",
     )
     return normalized_path
+
+
+def normalize_html_document(source_id: str, final_url: str, raw_html: str) -> NormalizedHtmlDocument:
+    return _extract_document(raw_html, {"source_id": source_id, "final_url": final_url, "url": final_url})
 
 
 def _extract_document(raw_html: str, metadata: dict[str, object]) -> NormalizedHtmlDocument:
@@ -51,7 +59,7 @@ def _extract_document(raw_html: str, metadata: dict[str, object]) -> NormalizedH
     final_url = str(metadata.get("final_url") or metadata.get("url") or "")
     title = _extract_title(soup)
     headings = _extract_headings(content_root)
-    text = _extract_text(content_root)
+    sections = _extract_sections(content_root, title)
     links = _extract_links(content_root, final_url)
 
     return NormalizedHtmlDocument(
@@ -59,7 +67,7 @@ def _extract_document(raw_html: str, metadata: dict[str, object]) -> NormalizedH
         final_url=final_url,
         title=title,
         headings=headings,
-        text=text,
+        sections=sections,
         links=links,
     )
 
@@ -72,7 +80,8 @@ def _extract_title(soup: BeautifulSoup) -> str:
 
 
 def _select_content_root(soup: BeautifulSoup):
-    candidates = [node for node in (soup.find("article"), soup.find("main"), soup.body) if node]
+    semantic_candidates = [node for node in (soup.find("article"), soup.find("main")) if node]
+    candidates = semantic_candidates if semantic_candidates else [node for node in (soup.body,) if node]
     if not candidates:
         return soup
 
@@ -97,13 +106,33 @@ def _extract_headings(content_root) -> list[str]:
     return headings
 
 
-def _extract_text(content_root) -> str:
-    text_chunks: list[str] = []
-    for node in content_root.find_all(["p", "li", "blockquote"]):
-        text = node.get_text(" ", strip=True)
-        if text:
-            text_chunks.append(text)
-    return "\n".join(text_chunks)
+def _extract_sections(content_root, title: str) -> list[NormalizedSection]:
+    sections: list[NormalizedSection] = []
+    heading_stack: list[str] = []
+    fallback_path = [title] if title else []
+
+    for node in content_root.find_all(["h1", "h2", "h3", "p", "li", "blockquote"]):
+        if node.name in {"h1", "h2", "h3"}:
+            heading_text = node.get_text(" ", strip=True)
+            if not heading_text:
+                continue
+            level = int(node.name[1])
+            heading_stack = heading_stack[: level - 1]
+            heading_stack.append(heading_text)
+            continue
+
+        paragraph_text = node.get_text(" ", strip=True)
+        if not paragraph_text:
+            continue
+        heading_path = heading_stack.copy() if heading_stack else fallback_path.copy()
+        if sections and sections[-1].heading_path == heading_path:
+            sections[-1].paragraphs.append(paragraph_text)
+        else:
+            sections.append(NormalizedSection(heading_path=heading_path, paragraphs=[paragraph_text]))
+
+    return sections
+
+
 
 
 def _extract_links(content_root, base_url: str) -> list[NormalizedLink]:
