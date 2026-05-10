@@ -8,6 +8,8 @@ dependencies = [
     "ddgs>=9.5.0",
     "httpx>=0.28.0",
     "langchain-text-splitters>=0.3.8",
+    "lancedb>=0.30.0",
+    "python-dotenv>=1.0.1"
 ]
 
 [project.optional-dependencies]

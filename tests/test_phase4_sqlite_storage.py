@@ -137,7 +137,7 @@ def test_cli_chunk_command_writes_json_and_sqlite(tmp_path: Path, capsys: pytest
     )
 
     argv_before = sys.argv
-    sys.argv = ["noesis", "chunk", str(run_path)]
+    sys.argv = ["noesis", "chunk", "debug-run", "--debug-run-path", str(run_path)]
     try:
         _load_cli_main()()
     finally:

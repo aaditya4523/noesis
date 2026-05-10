@@ -133,7 +133,7 @@ def test_cli_chunk_command_prints_chunk_file_path(tmp_path: Path, capsys: pytest
     )
 
     argv_before = sys.argv
-    sys.argv = ["noesis", "chunk", str(run_path)]
+    sys.argv = ["noesis", "chunk", "debug-run", "--debug-run-path", str(run_path)]
     try:
         _load_cli_main()()
     finally:
@@ -163,7 +163,7 @@ def test_cli_chunk_command_prints_chunk_lengths(tmp_path: Path, capsys: pytest.C
     )
 
     argv_before = sys.argv
-    sys.argv = ["noesis", "chunk", str(run_path)]
+    sys.argv = ["noesis", "chunk", "debug-run", "--debug-run-path", str(run_path)]
     try:
         _load_cli_main()()
     finally:
@@ -192,13 +192,39 @@ def test_collect_and_normalize_do_not_import_chunking_module(monkeypatch: pytest
     sys.modules.pop("noesis.cli", None)
 
     argv_before = sys.argv
-    sys.argv = ["noesis", "normalize", str(tmp_path / "missing-run")]
+    sys.argv = ["noesis", "normalize", "missing-run-id"]
     try:
         _load_cli_main()()
     finally:
         sys.argv = argv_before
 
     assert imported["chunking_loaded"] is False
+
+
+def test_cli_chunk_command_requires_debug_flag_for_run_paths(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    run_path = _create_normalized_run(
+        tmp_path,
+        run_id="needs-debug-flag",
+        source_id="source-001",
+        final_url="https://example.com/cache",
+        title="Cache Notes",
+        headings=["Cache Notes"],
+        text="Caches reduce repeated work.",
+        source_type="secondary",
+    )
+
+    argv_before = sys.argv
+    sys.argv = ["noesis", "chunk", str(run_path)]
+    with pytest.raises(SystemExit) as exc_info:
+        _load_cli_main()()
+    sys.argv = argv_before
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--debug-run-path" in captured.err
 
 
 def _create_normalized_run(

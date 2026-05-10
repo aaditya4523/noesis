@@ -1,5 +1,9 @@
 import json
+import importlib
+import sys
 from pathlib import Path
+
+import pytest
 
 from noesis.normalization import normalize_html_source, normalize_run_html_sources
 
@@ -193,6 +197,24 @@ def test_normalize_html_source_picks_richest_content_root(tmp_path: Path):
     ]
 
 
+def test_cli_normalize_command_requires_debug_flag_for_run_paths(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    run_path = tmp_path / "system-design-run"
+    (run_path / "sources").mkdir(parents=True)
+
+    argv_before = sys.argv
+    sys.argv = ["noesis", "normalize", str(run_path)]
+    with pytest.raises(SystemExit) as exc_info:
+        _load_cli_main()()
+    sys.argv = argv_before
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert "--debug-run-path" in captured.err
+
+
 def _create_html_source(parent: Path, source_id: str, final_url: str, raw_html: str) -> Path:
     source_dir = parent / source_id
     source_dir.mkdir(parents=True, exist_ok=True)
@@ -209,3 +231,9 @@ def _create_html_source(parent: Path, source_id: str, final_url: str, raw_html: 
         encoding="utf-8",
     )
     return source_dir
+
+
+def _load_cli_main():
+    sys.modules.pop("noesis.cli", None)
+    cli_module = importlib.import_module("noesis.cli")
+    return cli_module.main

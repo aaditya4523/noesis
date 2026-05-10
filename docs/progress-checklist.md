@@ -55,17 +55,17 @@
 - [x] Add tests for schema creation, record persistence, and run-scoped reads over stored `run`, `source`, and `chunk` records.
 - [x] Verify SQLite-backed persistence on a real collected run.
 
-## Phase 5: DB-First Evidence Pipeline Completion - Status: planned
+## Phase 5: DB-First Evidence Pipeline Completion - Status: completed
 
 - [x] Make `SQLite` the canonical store for `runs`, `sources`, `run_sources`, `sections`, and `chunks`.
 - [x] Complete source reuse in the live pipeline using canonical URL identity plus TTL-based refresh rules.
-- [ ] Persist normalized section structure directly to `SQLite` instead of writing `normalized.json` for the main path.
-- [ ] Read section records from `SQLite` during chunk generation instead of relying on filesystem run artifacts.
-- [ ] Remove `manifest.json`, `normalized.json`, `chunks.json`, and other `raw-runs` dependencies from the main `collect -> normalize -> chunk` flow.
-- [ ] Keep any remaining file-based artifacts as optional debug exports only, not as canonical storage.
-- [ ] Update CLI behavior so the primary path operates on shared `data/noesis.db`.
-- [ ] Add tests for DB-first collection, normalization, chunk generation, and source reuse across runs.
-- [ ] Update docs to reflect the DB-first pipeline and retirement of `raw-runs` as the main storage path.
+- [x] Persist normalized section structure directly to `SQLite` instead of writing `normalized.json` for the main path.
+- [x] Read section records from `SQLite` during chunk generation instead of relying on filesystem run artifacts.
+- [x] Remove `manifest.json`, `normalized.json`, `chunks.json`, and other `raw-runs` dependencies from the main `collect -> normalize -> chunk` flow.
+- [x] Keep any remaining file-based artifacts as optional debug exports only, not as canonical storage.
+- [x] Update CLI behavior so the primary path operates on shared `data/noesis.db`.
+- [x] Add tests for DB-first collection, normalization, chunk generation, and source reuse across runs.
+- [x] Update docs to reflect the DB-first pipeline and retirement of `raw-runs` as the main storage path.
 
 ## Phase 6: Embeddings and Vector Retrieval Foundation - Status: planned
 

@@ -1,0 +1,161 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --font-body: "Urbanist", "Aptos", "Segoe UI", sans-serif;
+  --font-display: "Urbanist", "Aptos Display", sans-serif;
+  --font-artifact: "Bricolage Grotesque", "Urbanist", sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Mono", monospace;
+  --paper: #eef0e7;
+  --surface: #f6f4ea;
+  --artifact: #fbfaf3;
+  --artifact-shell: #fbfaf3;
+  --ink: #132235;
+  --muted: #526171;
+  --subtle: #87919a;
+  --line: rgba(19, 34, 53, 0.12);
+  --accent: #1596a3;
+  --accent-ink: #0f5360;
+  --mist: #e6f1ef;
+  --sage: #e5ead9;
+  --sage-ink: #37432d;
+  --terracotta: #bf5b45;
+  --chartreuse: #d7e990;
+  --field-height: 3rem;
+  --button-height: var(--field-height);
+  --chip-height: 2.25rem;
+  --icon-button-size: 2.5rem;
+  --icon-button-sm: 2.25rem;
+  --brand-icon-size: 3rem;
+  --textarea-height: 6.75rem;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  background: var(--paper);
+  overflow: hidden;
+}
+
+body {
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  color: var(--ink);
+  background: var(--paper);
+  font-family: var(--font-body);
+  letter-spacing: -0.01em;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:focus,
+button:focus-visible,
+input:focus,
+input:focus-visible,
+textarea:focus,
+textarea:focus-visible,
+select:focus,
+select:focus-visible,
+div:focus,
+div:focus-visible {
+  outline: 2px solid rgba(58, 166, 185, 0.45);
+  outline-offset: 3px;
+}
+
+::selection {
+  background: var(--mist);
+  color: var(--accent-ink);
+}
+
+.scrollbar-none {
+  scrollbar-width: none;
+}
+
+.scrollbar-none::-webkit-scrollbar {
+  display: none;
+}
+
+.bg-noesis-pattern {
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, rgba(19, 34, 53, 0.06) 1px, transparent 1px) 0 0 / 42px 42px,
+    linear-gradient(0deg, rgba(19, 34, 53, 0.035) 1px, transparent 1px) 0 0 / 42px 42px,
+    repeating-linear-gradient(90deg, rgba(21, 150, 163, 0.075) 0 1px, transparent 1px 156px),
+    linear-gradient(90deg, rgba(230, 241, 239, 0.7), rgba(246, 244, 234, 0.7));
+}
+
+.bg-noesis-pattern::before,
+.bg-noesis-pattern::after {
+  content: "";
+  position: absolute;
+  border: 1px solid rgba(16, 24, 32, 0.1);
+  pointer-events: none;
+}
+
+.bg-noesis-pattern::before {
+  width: 1px;
+  height: 100%;
+  left: 27%;
+  top: 0;
+  border-radius: 0;
+  border: 0;
+  background:
+    linear-gradient(rgba(19, 34, 53, 0.12), rgba(19, 34, 53, 0.02));
+  transform: none;
+}
+
+.bg-noesis-pattern::after {
+  width: 1px;
+  height: 100%;
+  right: 16%;
+  bottom: 0;
+  border-radius: 0;
+  border: 0;
+  background:
+    linear-gradient(rgba(21, 150, 163, 0.11), rgba(21, 150, 163, 0.02));
+  transform: none;
+}
+
+.frost-overlay {
+  background:
+    radial-gradient(circle at 24% 20%, rgba(255, 255, 255, 0.66), transparent 18rem),
+    radial-gradient(circle at 78% 62%, rgba(232, 245, 247, 0.62), transparent 20rem),
+    rgba(247, 245, 238, 0.56);
+  backdrop-filter: blur(24px) saturate(1.08);
+}
+
+.frost-overlay::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background:
+    linear-gradient(90deg, rgba(255, 255, 255, 0.38), transparent 34%, rgba(255, 255, 255, 0.26)),
+    radial-gradient(circle at center, rgba(23, 32, 39, 0.04) 1px, transparent 1.5px) 0 0 / 20px 20px;
+}
+
+.composer-panel {
+  animation: composer-slide 180ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes composer-slide {
+  from {
+    transform: translateY(18px);
+  }
+
+  to {
+    transform: translateY(0);
+  }
+}

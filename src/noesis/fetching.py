@@ -3,6 +3,7 @@ from __future__ import annotations
 from bs4 import BeautifulSoup
 import httpx
 
+from noesis.errors import FetchError, extract_http_error_message
 from noesis.models import FetchResult, SourceCandidate
 
 
@@ -11,13 +12,19 @@ class HttpSourceFetcher:
         self.timeout = timeout
 
     def fetch(self, candidate: SourceCandidate) -> FetchResult:
-        response = httpx.get(
-            candidate.url,
-            follow_redirects=True,
-            timeout=self.timeout,
-            headers={"User-Agent": "Noesis/0.1"},
-        )
-        response.raise_for_status()
+        try:
+            response = httpx.get(
+                candidate.url,
+                follow_redirects=True,
+                timeout=self.timeout,
+                headers={"User-Agent": "Noesis/0.1"},
+            )
+            response.raise_for_status()
+        except httpx.HTTPStatusError as exc:
+            message = extract_http_error_message(exc) or f"failed to fetch {candidate.url}: {exc.response.status_code}"
+            raise FetchError(message) from exc
+        except httpx.RequestError as exc:
+            raise FetchError(f"failed to fetch {candidate.url}: {exc}") from exc
         published_date = _extract_published_date(response.text)
         return FetchResult(
             candidate=candidate,

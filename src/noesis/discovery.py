@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 from ddgs import DDGS
 
+from noesis.errors import DiscoveryError
 from noesis.models import SourceCandidate
 
 
@@ -12,8 +13,11 @@ class DDGSDiscoverer:
         self.max_results = max_results
 
     def discover(self, topic: str) -> list[SourceCandidate]:
-        with DDGS() as ddgs:
-            results = ddgs.text(topic, max_results=self.max_results)
+        try:
+            with DDGS() as ddgs:
+                results = ddgs.text(topic, max_results=self.max_results)
+        except Exception as exc:
+            raise DiscoveryError(f"DDGS discovery failed: {exc}") from exc
 
         candidates: list[SourceCandidate] = []
         for result in results:

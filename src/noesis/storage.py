@@ -6,6 +6,7 @@ from dataclasses import asdict
 from pathlib import Path
 from urllib.parse import urlparse
 from datetime import UTC, datetime
+from hashlib import sha256
 from uuid import uuid4
 
 from noesis.models import AcquisitionRun, CollectedSource, EvidenceChunk, NormalizedHtmlDocument
@@ -221,6 +222,384 @@ def load_run_chunks_from_sqlite(run_path: Path) -> list[dict[str, object]]:
         return [dict(row) for row in rows]
 
 
+def load_run_html_sources_from_shared_sqlite(db_path: Path, run_id: str) -> list[dict[str, object]]:
+    ensure_shared_sqlite_schema(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                sources.source_id,
+                sources.url,
+                sources.final_url,
+                sources.title,
+                sources.source_type,
+                sources.content_type,
+                sources.raw_content
+            FROM run_sources
+            JOIN sources ON sources.source_id = run_sources.source_id
+            WHERE run_sources.run_id = ?
+            ORDER BY run_sources.source_order
+            """,
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def load_run_documents_from_shared_sqlite(db_path: Path, run_id: str) -> list[dict[str, object]]:
+    if not db_path.exists():
+        return []
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                sources.source_id,
+                sources.final_url,
+                sources.title,
+                sources.source_type,
+                sections.section_index,
+                sections.heading_path,
+                sections.paragraphs
+            FROM run_sources
+            JOIN sources ON sources.source_id = run_sources.source_id
+            JOIN sections ON sections.source_id = sources.source_id
+            WHERE run_sources.run_id = ?
+            ORDER BY run_sources.source_order, sections.section_index
+            """,
+            (run_id,),
+        ).fetchall()
+
+    documents: list[dict[str, object]] = []
+    by_source_id: dict[str, dict[str, object]] = {}
+    for row in rows:
+        source_id = str(row["source_id"])
+        document = by_source_id.get(source_id)
+        if document is None:
+            document = {
+                "source_id": source_id,
+                "final_url": str(row["final_url"]),
+                "title": str(row["title"]),
+                "source_type": str(row["source_type"]),
+                "sections": [],
+            }
+            by_source_id[source_id] = document
+            documents.append(document)
+        sections = document["sections"]
+        assert isinstance(sections, list)
+        sections.append(
+            {
+                "heading_path": json.loads(str(row["heading_path"])),
+                "paragraphs": json.loads(str(row["paragraphs"])),
+            }
+        )
+    return documents
+
+
+def load_run_chunks_from_shared_sqlite(db_path: Path, run_id: str) -> list[dict[str, object]]:
+    ensure_shared_sqlite_schema(db_path)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                runs.run_id,
+                sources.source_id,
+                sources.final_url AS source_url,
+                sources.title,
+                sources.source_type,
+                sections.heading_path,
+                sections.paragraphs,
+                chunks.chunk_id,
+                chunks.paragraph_index,
+                chunks.chunk_index,
+                chunks.text
+            FROM run_sources
+            JOIN runs ON runs.run_id = run_sources.run_id
+            JOIN sources ON sources.source_id = run_sources.source_id
+            JOIN sections ON sections.source_id = sources.source_id
+            JOIN chunks ON chunks.section_id = sections.section_id
+            WHERE run_sources.run_id = ?
+            ORDER BY run_sources.source_order, sections.section_index, chunks.paragraph_index, chunks.chunk_index
+            """,
+            (run_id,),
+        ).fetchall()
+    chunk_rows: list[dict[str, object]] = []
+    for row in rows:
+        paragraphs = json.loads(str(row["paragraphs"]))
+        paragraph_index = int(row["paragraph_index"])
+        chunk_rows.append(
+            {
+                "chunk_id": str(row["chunk_id"]),
+                "run_id": str(row["run_id"]),
+                "source_id": str(row["source_id"]),
+                "source_url": str(row["source_url"]),
+                "title": str(row["title"]),
+                "heading_path": json.loads(str(row["heading_path"])),
+                "source_type": str(row["source_type"]),
+                "paragraph_index": paragraph_index,
+                "chunk_index": int(row["chunk_index"]),
+                "text": str(row["text"]),
+                "parent_paragraph_text": str(paragraphs[paragraph_index]),
+            }
+        )
+    return chunk_rows
+
+
+def replace_source_sections_shared_sqlite(
+    db_path: Path,
+    *,
+    source_id: str,
+    normalized: NormalizedHtmlDocument,
+) -> Path:
+    ensure_shared_sqlite_schema(db_path)
+    section_rows = _build_section_rows_from_document(source_id, normalized)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute("DELETE FROM chunks WHERE section_id IN (SELECT section_id FROM sections WHERE source_id = ?)", (source_id,))
+        connection.execute("DELETE FROM sections WHERE source_id = ?", (source_id,))
+        if section_rows:
+            connection.executemany(
+                """
+                INSERT INTO sections (section_id, source_id, section_index, heading_path, paragraphs)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                section_rows,
+            )
+    return db_path
+
+
+def replace_run_chunks_shared_sqlite(db_path: Path, run_id: str, chunks: list[EvidenceChunk]) -> Path:
+    ensure_shared_sqlite_schema(db_path)
+    paragraph_lookup = _load_shared_paragraph_lookup(db_path, run_id)
+
+    with sqlite3.connect(db_path) as connection:
+        connection.execute("PRAGMA foreign_keys = ON")
+        connection.execute(
+            """
+            DELETE FROM chunks
+            WHERE section_id IN (
+                SELECT sections.section_id
+                FROM sections
+                JOIN run_sources ON run_sources.source_id = sections.source_id
+                WHERE run_sources.run_id = ?
+            )
+            """,
+            (run_id,),
+        )
+        chunk_rows = _build_chunk_rows(chunks, paragraph_lookup)
+        if chunk_rows:
+            connection.executemany(
+                """
+                INSERT INTO chunks (chunk_id, section_id, paragraph_index, chunk_index, text)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                chunk_rows,
+            )
+
+    return db_path
+
+
+def find_embedding_record_sqlite(
+    db_path: Path,
+    *,
+    payload_hash: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+) -> dict[str, object] | None:
+    ensure_shared_sqlite_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """
+            SELECT
+                embedding_id,
+                payload_hash,
+                embedding_model,
+                embedding_dimensions,
+                provider,
+                created_at,
+                status
+            FROM embeddings
+            WHERE payload_hash = ? AND embedding_model = ? AND embedding_dimensions = ?
+            """,
+            (payload_hash, embedding_model, embedding_dimensions),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def save_embedding_record_sqlite(
+    db_path: Path,
+    *,
+    payload_hash: str,
+    embedding_model: str,
+    embedding_dimensions: int,
+    provider: str,
+    created_at: str,
+    status: str,
+) -> str:
+    ensure_shared_sqlite_schema(db_path)
+    existing = find_embedding_record_sqlite(
+        db_path,
+        payload_hash=payload_hash,
+        embedding_model=embedding_model,
+        embedding_dimensions=embedding_dimensions,
+    )
+    if existing:
+        return str(existing["embedding_id"])
+
+    embedding_id = f"embedding-{uuid4().hex[:12]}"
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT INTO embeddings (
+                embedding_id,
+                payload_hash,
+                embedding_model,
+                embedding_dimensions,
+                provider,
+                created_at,
+                status
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                embedding_id,
+                payload_hash,
+                embedding_model,
+                embedding_dimensions,
+                provider,
+                created_at,
+                status,
+            ),
+        )
+    return embedding_id
+
+
+def link_chunk_embedding_sqlite(db_path: Path, *, chunk_id: str, embedding_id: str, run_id: str) -> None:
+    ensure_shared_sqlite_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO chunk_embeddings (chunk_id, embedding_id, run_id)
+            VALUES (?, ?, ?)
+            """,
+            (chunk_id, embedding_id, run_id),
+        )
+
+
+def load_embedding_records_sqlite(db_path: Path) -> list[dict[str, object]]:
+    ensure_shared_sqlite_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                embedding_id,
+                payload_hash,
+                embedding_model,
+                embedding_dimensions,
+                provider,
+                created_at,
+                status
+            FROM embeddings
+            ORDER BY embedding_id
+            """
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def load_chunk_embedding_links_sqlite(db_path: Path, run_id: str) -> list[dict[str, object]]:
+    ensure_shared_sqlite_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT chunk_id, embedding_id, run_id
+            FROM chunk_embeddings
+            WHERE run_id = ?
+            ORDER BY chunk_id, embedding_id
+            """,
+            (run_id,),
+        ).fetchall()
+    return [dict(row) for row in rows]
+
+
+def load_run_embedding_config_sqlite(db_path: Path, run_id: str) -> dict[str, object] | None:
+    ensure_shared_sqlite_schema(db_path)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        row = connection.execute(
+            """
+            SELECT
+                embeddings.embedding_model,
+                embeddings.embedding_dimensions,
+                embeddings.provider
+            FROM chunk_embeddings
+            JOIN embeddings ON embeddings.embedding_id = chunk_embeddings.embedding_id
+            WHERE chunk_embeddings.run_id = ?
+            ORDER BY embeddings.created_at ASC
+            LIMIT 1
+            """,
+            (run_id,),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def hydrate_lookup_rows_sqlite(db_path: Path, chunk_ids: list[str]) -> list[dict[str, object]]:
+    if not chunk_ids:
+        return []
+    ensure_shared_sqlite_schema(db_path)
+    placeholders = ", ".join("?" for _ in chunk_ids)
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            f"""
+            SELECT
+                runs.run_id,
+                sources.source_id,
+                sources.final_url AS source_url,
+                sources.title,
+                sources.source_type,
+                sections.heading_path,
+                sections.paragraphs,
+                chunks.chunk_id,
+                chunks.paragraph_index,
+                chunks.chunk_index,
+                chunks.text
+            FROM chunk_embeddings
+            JOIN chunks ON chunks.chunk_id = chunk_embeddings.chunk_id
+            JOIN sections ON sections.section_id = chunks.section_id
+            JOIN sources ON sources.source_id = sections.source_id
+            JOIN run_sources ON run_sources.source_id = sources.source_id AND run_sources.run_id = chunk_embeddings.run_id
+            JOIN runs ON runs.run_id = chunk_embeddings.run_id
+            WHERE chunks.chunk_id IN ({placeholders})
+            """,
+            chunk_ids,
+        ).fetchall()
+    hydrated: dict[str, dict[str, object]] = {}
+    for row in rows:
+        paragraphs = json.loads(str(row["paragraphs"]))
+        paragraph_index = int(row["paragraph_index"])
+        hydrated[str(row["chunk_id"])] = {
+            "chunk_id": str(row["chunk_id"]),
+            "run_id": str(row["run_id"]),
+            "source_id": str(row["source_id"]),
+            "source_url": str(row["source_url"]),
+            "title": str(row["title"]),
+            "heading_path": json.loads(str(row["heading_path"])),
+            "source_type": str(row["source_type"]),
+            "paragraph_index": paragraph_index,
+            "chunk_index": int(row["chunk_index"]),
+            "text": str(row["text"]),
+            "parent_paragraph_text": str(paragraphs[paragraph_index]),
+        }
+    return [hydrated[chunk_id] for chunk_id in chunk_ids if chunk_id in hydrated]
+
+
 def _ensure_sqlite_schema(connection: sqlite3.Connection) -> None:
     connection.executescript(
         """
@@ -388,6 +767,7 @@ def ensure_shared_sqlite_schema(db_path: Path) -> Path:
                 domain TEXT NOT NULL,
                 source_type TEXT NOT NULL,
                 content_type TEXT,
+                raw_content BLOB,
                 last_fetched_at TEXT NOT NULL,
                 refresh_ttl_days INTEGER NOT NULL
             );
@@ -420,8 +800,30 @@ def ensure_shared_sqlite_schema(db_path: Path) -> Path:
                 FOREIGN KEY (section_id) REFERENCES sections(section_id) ON DELETE CASCADE,
                 UNIQUE (section_id, paragraph_index, chunk_index)
             );
+
+            CREATE TABLE IF NOT EXISTS embeddings (
+                embedding_id TEXT PRIMARY KEY,
+                payload_hash TEXT NOT NULL,
+                embedding_model TEXT NOT NULL,
+                embedding_dimensions INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                status TEXT NOT NULL,
+                UNIQUE (payload_hash, embedding_model, embedding_dimensions)
+            );
+
+            CREATE TABLE IF NOT EXISTS chunk_embeddings (
+                chunk_id TEXT NOT NULL,
+                embedding_id TEXT NOT NULL,
+                run_id TEXT NOT NULL,
+                PRIMARY KEY (chunk_id, embedding_id),
+                FOREIGN KEY (chunk_id) REFERENCES chunks(chunk_id) ON DELETE CASCADE,
+                FOREIGN KEY (embedding_id) REFERENCES embeddings(embedding_id) ON DELETE CASCADE,
+                FOREIGN KEY (run_id) REFERENCES runs(run_id) ON DELETE CASCADE
+            );
             """
         )
+        _ensure_column(connection, "sources", "raw_content", "BLOB")
     return db_path
 
 
@@ -460,6 +862,7 @@ def find_reusable_source_sqlite(
                 domain,
                 source_type,
                 content_type,
+                raw_content,
                 last_fetched_at,
                 refresh_ttl_days
             FROM sources
@@ -485,6 +888,7 @@ def save_source_graph_sqlite(
     domain: str,
     source_type: str,
     content_type: str | None,
+    raw_content: bytes,
     fetched_at: str,
     refresh_ttl_days: int,
     normalized: NormalizedHtmlDocument,
@@ -509,9 +913,10 @@ def save_source_graph_sqlite(
                 domain,
                 source_type,
                 content_type,
+                raw_content,
                 last_fetched_at,
                 refresh_ttl_days
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(source_id) DO UPDATE SET
                 canonical_url=excluded.canonical_url,
                 url=excluded.url,
@@ -520,6 +925,7 @@ def save_source_graph_sqlite(
                 domain=excluded.domain,
                 source_type=excluded.source_type,
                 content_type=excluded.content_type,
+                raw_content=excluded.raw_content,
                 last_fetched_at=excluded.last_fetched_at,
                 refresh_ttl_days=excluded.refresh_ttl_days
             """,
@@ -532,6 +938,7 @@ def save_source_graph_sqlite(
                 domain,
                 source_type,
                 content_type,
+                raw_content,
                 fetched_at,
                 refresh_ttl_days,
             ),
@@ -619,3 +1026,42 @@ def _build_chunk_rows_from_section_lookup(
             )
         )
     return rows
+
+
+def _load_shared_paragraph_lookup(db_path: Path, run_id: str) -> dict[tuple[str, int], tuple[str, int]]:
+    with sqlite3.connect(db_path) as connection:
+        connection.row_factory = sqlite3.Row
+        rows = connection.execute(
+            """
+            SELECT
+                sections.section_id,
+                sections.source_id,
+                sections.section_index,
+                sections.paragraphs
+            FROM run_sources
+            JOIN sections ON sections.source_id = run_sources.source_id
+            WHERE run_sources.run_id = ?
+            ORDER BY run_sources.source_order, sections.section_index
+            """,
+            (run_id,),
+        ).fetchall()
+
+    paragraph_lookup: dict[tuple[str, int], tuple[str, int]] = {}
+    paragraph_counts: dict[str, int] = {}
+    for row in rows:
+        source_id = str(row["source_id"])
+        global_paragraph_index = paragraph_counts.get(source_id, 0)
+        for paragraph_index, _paragraph in enumerate(json.loads(str(row["paragraphs"]))):
+            paragraph_lookup[(source_id, global_paragraph_index)] = (str(row["section_id"]), paragraph_index)
+            global_paragraph_index += 1
+        paragraph_counts[source_id] = global_paragraph_index
+    return paragraph_lookup
+
+
+def _ensure_column(connection: sqlite3.Connection, table_name: str, column_name: str, column_definition: str) -> None:
+    columns = {
+        str(row[1])
+        for row in connection.execute(f"PRAGMA table_info({table_name})").fetchall()
+    }
+    if column_name not in columns:
+        connection.execute(f"ALTER TABLE {table_name} ADD COLUMN {column_name} {column_definition}")

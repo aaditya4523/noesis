@@ -1,5 +1,11 @@
 from pathlib import Path
+import importlib
+import sys
 
+import noesis.orchestrator
+import pytest
+
+from noesis.errors import DiscoveryError
 from noesis.models import FetchResult, SourceCandidate
 from noesis.orchestrator import collect_topic_sources
 from noesis.ranking import prioritize_candidates
@@ -180,3 +186,62 @@ def test_save_run_corpus_preserves_binary_source_extension(tmp_path: Path):
     saved_path = save_run_corpus(run, tmp_path)
 
     assert (saved_path / "sources" / "source-001" / "raw.pdf").exists()
+
+
+def test_collect_cli_accepts_max_sources(monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]):
+    captured: dict[str, object] = {}
+
+    class FakeDiscoverer:
+        def __init__(self, max_results: int) -> None:
+            captured["max_results"] = max_results
+
+    def fake_collect_topic_sources_to_db(*, topic, discoverer, fetcher, db_path, max_sources, on_fetch_error=None):
+        captured["topic"] = topic
+        captured["discoverer"] = discoverer
+        captured["fetcher"] = fetcher
+        captured["db_path"] = db_path
+        captured["max_sources"] = max_sources
+        return type("Run", (), {"run_id": "run-123"})()
+
+    monkeypatch.setattr(noesis.orchestrator, "collect_topic_sources_to_db", fake_collect_topic_sources_to_db)
+
+    sys.modules.pop("noesis.cli", None)
+    cli_module = importlib.import_module("noesis.cli")
+    monkeypatch.setattr(cli_module, "DDGSDiscoverer", FakeDiscoverer)
+
+    argv_before = sys.argv
+    sys.argv = ["noesis", "collect", "game theory", "--max-sources", "3"]
+    try:
+        cli_module.main()
+    finally:
+        sys.argv = argv_before
+
+    assert captured["topic"] == "game theory"
+    assert captured["max_results"] == 3
+    assert captured["max_sources"] == 3
+    assert captured["db_path"] == Path("data") / "noesis.db"
+    assert capsys.readouterr().out.splitlines() == ["run-123", str(Path("data") / "noesis.db")]
+
+
+def test_collect_cli_prints_clean_discovery_error(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    def fake_collect_topic_sources_to_db(*, topic, discoverer, fetcher, db_path, max_sources, on_fetch_error=None):
+        raise DiscoveryError("DDGS discovery failed: network unavailable")
+
+    monkeypatch.setattr(noesis.orchestrator, "collect_topic_sources_to_db", fake_collect_topic_sources_to_db)
+
+    sys.modules.pop("noesis.cli", None)
+    cli_module = importlib.import_module("noesis.cli")
+
+    argv_before = sys.argv
+    sys.argv = ["noesis", "collect", "game theory"]
+    try:
+        with pytest.raises(SystemExit) as excinfo:
+            cli_module.main()
+    finally:
+        sys.argv = argv_before
+
+    assert excinfo.value.code == 1
+    assert capsys.readouterr().err.splitlines() == ["error: DDGS discovery failed: network unavailable"]

@@ -6,6 +6,7 @@ from pathlib import Path
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from noesis.models import EvidenceChunk
+from noesis.storage import load_run_documents_from_shared_sqlite
 
 
 def generate_run_chunks(run_path: Path, max_paragraph_chars: int = 480) -> list[EvidenceChunk]:
@@ -35,6 +36,30 @@ def generate_run_chunks(run_path: Path, max_paragraph_chars: int = 480) -> list[
             )
         )
 
+    return chunks
+
+
+def generate_run_chunks_sqlite(
+    db_path: Path,
+    run_id: str,
+    max_paragraph_chars: int = 480,
+) -> list[EvidenceChunk]:
+    chunks: list[EvidenceChunk] = []
+    for document in load_run_documents_from_shared_sqlite(db_path, run_id):
+        chunks.extend(
+            generate_document_chunks(
+                run_id=run_id,
+                normalized={
+                    "source_id": document["source_id"],
+                    "final_url": document["final_url"],
+                    "title": document["title"],
+                    "sections": document["sections"],
+                },
+                source_type=str(document["source_type"]),
+                fallback_source_id=str(document["source_id"]),
+                max_paragraph_chars=max_paragraph_chars,
+            )
+        )
     return chunks
 
 

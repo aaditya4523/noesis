@@ -7,6 +7,7 @@ from urllib.parse import urljoin, urldefrag, urlparse
 from bs4 import BeautifulSoup
 
 from noesis.models import NormalizedHtmlDocument, NormalizedLink, NormalizedSection
+from noesis.storage import load_run_html_sources_from_shared_sqlite, replace_source_sections_shared_sqlite
 
 
 def normalize_run_html_sources(run_path: Path) -> list[Path]:
@@ -40,6 +41,30 @@ def normalize_html_source(source_dir: Path) -> Path:
         encoding="utf-8",
     )
     return normalized_path
+
+
+def normalize_run_html_sources_sqlite(db_path: Path, run_id: str) -> list[str]:
+    normalized_source_ids: list[str] = []
+    for source in load_run_html_sources_from_shared_sqlite(db_path, run_id):
+        content_type = str(source.get("content_type") or "")
+        if "html" not in content_type.lower():
+            continue
+        raw_content = source.get("raw_content")
+        if raw_content is None:
+            continue
+        raw_html = bytes(raw_content).decode("utf-8", errors="ignore")
+        normalized = normalize_html_document(
+            source_id=str(source.get("source_id") or "source"),
+            final_url=str(source.get("final_url") or source.get("url") or ""),
+            raw_html=raw_html,
+        )
+        replace_source_sections_shared_sqlite(
+            db_path,
+            source_id=normalized.source_id,
+            normalized=normalized,
+        )
+        normalized_source_ids.append(normalized.source_id)
+    return normalized_source_ids
 
 
 def normalize_html_document(source_id: str, final_url: str, raw_html: str) -> NormalizedHtmlDocument:

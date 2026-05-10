@@ -5,6 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 from datetime import UTC, datetime
 
+from noesis.errors import DataNotFoundError, FetchError
 from noesis.models import AcquisitionRun, CollectedSource
 from noesis.normalization import normalize_html_document
 from noesis.ranking import prioritize_candidates
@@ -19,12 +20,33 @@ from noesis.storage import (
 )
 
 
+def _require_int(value: object, field_name: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int | str):
+        raise TypeError(f"{field_name} must be an int-compatible value")
+    return int(value)
+
+
+def _optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("expected string-compatible value")
+    return value
+
+
+def _require_str(value: object, field_name: str) -> str:
+    if not isinstance(value, str):
+        raise TypeError(f"{field_name} must be a string value")
+    return value
+
+
 def collect_topic_sources(
     topic: str,
     discoverer,
     fetcher,
     output_root: Path,
     max_sources: int = 10,
+    on_fetch_error=None,
 ) -> AcquisitionRun:
     del output_root
 
@@ -34,7 +56,13 @@ def collect_topic_sources(
     for candidate in prioritized[:max_sources]:
         try:
             result = fetcher.fetch(candidate)
-        except Exception:
+        except FetchError as exc:
+            if on_fetch_error is not None:
+                on_fetch_error(str(exc))
+            continue
+        except Exception as exc:
+            if on_fetch_error is not None:
+                on_fetch_error(f"failed to fetch {candidate.url}: {exc}")
             continue
 
         index = len(collected) + 1
@@ -53,6 +81,9 @@ def collect_topic_sources(
                 published_date=result.published_date,
             )
         )
+
+    if not collected:
+        raise DataNotFoundError(f"no sources were collected for topic '{topic}'")
 
     return AcquisitionRun(
         run_id=_build_run_id(topic),
@@ -76,6 +107,7 @@ def collect_topic_sources_to_db(
     max_sources: int = 10,
     ttl_days: int = 365,
     now: datetime | None = None,
+    on_fetch_error=None,
 ) -> AcquisitionRun:
     ensure_shared_sqlite_schema(db_path)
     current_time = now or datetime.now(UTC)
@@ -85,6 +117,7 @@ def collect_topic_sources_to_db(
 
     prioritized = prioritize_candidates(discoverer.discover(topic))
     collected: list[CollectedSource] = []
+    linked_sources = 0
 
     for source_order, candidate in enumerate(prioritized[:max_sources]):
         candidate_canonical_url = canonicalize_url(candidate.url)
@@ -94,21 +127,28 @@ def collect_topic_sources_to_db(
             now=current_time_iso,
         )
         if existing and not should_refresh_source(
-            str(existing["last_fetched_at"]) if existing["last_fetched_at"] else None,
+            _optional_str(existing["last_fetched_at"]),
             now=current_time,
-            ttl_days=int(existing["refresh_ttl_days"]),
+            ttl_days=_require_int(existing["refresh_ttl_days"], "refresh_ttl_days"),
         ):
             link_run_to_existing_source_sqlite(
                 db_path,
                 run_id=run_id,
-                source_id=str(existing["source_id"]),
+                source_id=_require_str(existing["source_id"], "source_id"),
                 source_order=source_order,
             )
+            linked_sources += 1
             continue
 
         try:
             result = fetcher.fetch(candidate)
-        except Exception:
+        except FetchError as exc:
+            if on_fetch_error is not None:
+                on_fetch_error(str(exc))
+            continue
+        except Exception as exc:
+            if on_fetch_error is not None:
+                on_fetch_error(f"failed to fetch {candidate.url}: {exc}")
             continue
 
         final_canonical_url = canonicalize_url(result.final_url)
@@ -118,19 +158,20 @@ def collect_topic_sources_to_db(
             now=current_time_iso,
         )
         if existing and not should_refresh_source(
-            str(existing["last_fetched_at"]) if existing["last_fetched_at"] else None,
+            _optional_str(existing["last_fetched_at"]),
             now=current_time,
-            ttl_days=int(existing["refresh_ttl_days"]),
+            ttl_days=_require_int(existing["refresh_ttl_days"], "refresh_ttl_days"),
         ):
             link_run_to_existing_source_sqlite(
                 db_path,
                 run_id=run_id,
-                source_id=str(existing["source_id"]),
+                source_id=_require_str(existing["source_id"], "source_id"),
                 source_order=source_order,
             )
+            linked_sources += 1
             continue
 
-        source_id = str(existing["source_id"]) if existing else f"source-{uuid4().hex[:12]}"
+        source_id = _require_str(existing["source_id"], "source_id") if existing else f"source-{uuid4().hex[:12]}"
         raw_text = result.raw_content.decode("utf-8", errors="ignore")
         normalized = normalize_html_document(source_id=source_id, final_url=result.final_url, raw_html=raw_text)
         chunks = generate_document_chunks(
@@ -151,6 +192,7 @@ def collect_topic_sources_to_db(
             domain=candidate.domain,
             source_type=candidate.source_type,
             content_type=result.content_type,
+            raw_content=result.raw_content,
             fetched_at=current_time_iso,
             refresh_ttl_days=ttl_days,
             normalized=normalized,
@@ -171,6 +213,9 @@ def collect_topic_sources_to_db(
                 published_date=result.published_date,
             )
         )
+
+    if not collected and linked_sources == 0:
+        raise DataNotFoundError(f"no sources were collected for topic '{topic}'")
 
     return AcquisitionRun(
         run_id=run_id,
