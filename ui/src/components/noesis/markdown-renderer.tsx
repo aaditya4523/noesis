@@ -49,15 +49,15 @@ const markdownComponents: Components = {
     </strong>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="max-w-[48rem] border-l-2 border-[color:var(--terracotta)] bg-white/58 px-4 py-3 text-[color:var(--muted)]">
+    <blockquote className="max-w-[48rem] border-l-2 border-[color:var(--terracotta)] bg-[color:var(--card-soft)] px-4 py-3 text-[color:var(--muted)]">
       {children}
     </blockquote>
   ),
   ol: ({ children }) => (
-    <ol className="max-w-[48rem] list-decimal space-y-2 pl-5">{children}</ol>
+    <ol className="w-full list-decimal space-y-2 pl-5">{children}</ol>
   ),
   ul: ({ children }) => (
-    <ul className="max-w-[48rem] space-y-2 text-sm font-medium leading-7 text-[color:var(--muted)]">
+    <ul className="w-full space-y-2 text-sm font-medium leading-7 text-[color:var(--muted)]">
       {children}
     </ul>
   ),

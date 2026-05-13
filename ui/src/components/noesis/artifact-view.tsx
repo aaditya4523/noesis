@@ -1,5 +1,6 @@
 "use client";
 
+import type { CSSProperties } from "react";
 import { useEffect, useRef, useState } from "react";
 import { headingReferenceItems } from "./data";
 import { ArtifactChat } from "./artifact-chat";
@@ -8,7 +9,12 @@ import { MarkdownDocument } from "./markdown-document";
 import { RailControls } from "./rail-controls";
 import type { Artifact } from "./types";
 
-export function ArtifactView({ artifact }: { artifact: Artifact }) {
+type ArtifactViewProps = {
+  artifact: Artifact;
+  isArtifactsCollapsed: boolean;
+};
+
+export function ArtifactView({ artifact, isArtifactsCollapsed }: ArtifactViewProps) {
   const markdownScrollRef = useRef<HTMLDivElement>(null);
   const [activeHeading, setActiveHeading] = useState("title");
 
@@ -76,18 +82,25 @@ export function ArtifactView({ artifact }: { artifact: Artifact }) {
     <section
       aria-label="Artifact view"
       className="relative flex h-full min-h-0 flex-col gap-3 overflow-hidden bg-transparent"
+      style={{
+        "--rail-width": isArtifactsCollapsed
+          ? "calc(22rem + clamp(280px,22vw,340px) - var(--icon-button-size))"
+          : "22rem"
+      } as CSSProperties}
     >
-      <div className="grid min-h-0 flex-1 gap-5 xl:grid-cols-[minmax(0,1fr)_200px]">
+      <div className="grid min-h-0 flex-1 gap-6 transition-[grid-template-columns] duration-300 ease-[cubic-bezier(0.2,0.8,0.2,1)] xl:grid-cols-[minmax(0,1fr)_var(--rail-width)] xl:gap-8">
         <MarkdownDocument markdown={artifact.markdown} scrollRef={markdownScrollRef} />
         <HeadingReference
           activeHeading={activeHeading}
           items={headingReferenceItems}
           onSelectHeading={scrollToHeading}
-        />
+        >
+          <div className="space-y-2">
+            <RailControls />
+            <ArtifactChat />
+          </div>
+        </HeadingReference>
       </div>
-
-      <RailControls />
-      <ArtifactChat />
     </section>
   );
 }
